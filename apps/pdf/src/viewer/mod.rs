@@ -1536,13 +1536,15 @@ fn more_menu(pop: &gtk::Popover) -> gtk::Box {
     bx.append(&menu_item(pop, "Open…", "Ctrl+O", doc::open_dialog));
     let save_as = menu_item(pop, "Save a copy as…", "Ctrl+Shift+S", doc::save_as_dialog);
     let print = menu_item(pop, "Print…", "Ctrl+P", doc::print);
+    let share = menu_item(pop, "Share…", "", crate::share::document);
     let present = menu_item(pop, "Present", "F5", toggle_presenting);
     let close = menu_item(pop, "Close file", "Ctrl+W", close_file);
-    for b in [&save_as, &print, &present, &close] {
+    for b in [&save_as, &print, &share, &present, &close] {
         b.set_sensitive(d.is_some());
     }
     bx.append(&save_as);
     bx.append(&print);
+    bx.append(&share);
     bx.append(&menu_sep());
     bx.append(&present);
     if d.as_ref().is_some_and(|d| has_fields(d)) {

@@ -9,6 +9,7 @@ mod paths;
 mod prefs;
 mod recent;
 mod sections;
+mod share;
 mod settings_dialog;
 #[cfg(test)]
 mod testpdf;
@@ -49,6 +50,8 @@ fn main() -> glib::ExitCode {
     // Developer aid: a different id gives a separate instance, so a test run doesn't hand
     // its arguments to the copy that's open.
     let id = std::env::var("NPDF_APP_ID").unwrap_or_else(|_| APP_ID.to_string());
+    // Windows without an application, like dialogs, take their Wayland app ID from this.
+    glib::set_prgname(Some(id.as_str()));
     let app = gtk::Application::builder().application_id(id).flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE).build();
     // Nyx Assistant opens, reads and searches PDFs through this (primary instance only).
     app.connect_startup(|app| nyx_core::control::serve(app, control::tools(), control::handle));

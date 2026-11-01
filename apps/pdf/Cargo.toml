@@ -12,6 +12,7 @@ name = "nyx-pdf"
 path = "src/main.rs"
 
 [dependencies]
+nyx-share-client = { git = "https://github.com/design-nexus/nyx-share.git", rev = "3923640afdcbfe09fa4c1faaf7d952db071f3812" }
 nyx-core = { git = "https://github.com/design-nexus/nyx-core.git", rev = "52cba5e27a3dd5f00c780f53e423302b4b5f9c9c" }
 serde_json = "1"
 nyx-ui = { git = "https://github.com/design-nexus/nyx-design.git", rev = "5c4172947c18876c05d3173d2ebe2a1e434b098b" }
