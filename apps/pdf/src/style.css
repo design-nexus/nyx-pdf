@@ -12,6 +12,13 @@
   color: @theme_dim_text;
 }
 
+/* The icon-only sidebar hides its group labels itself. The shared sheet's
+   font-size: 0 for them can stick after the sidebar expands again. */
+.settings-navigation .nav-group,
+.settings-navigation.compact .nav-group {
+  font-size: 11px;
+}
+
 /* ---------- Pages that fill the window ---------- */
 
 .settings-page.bare {

@@ -135,9 +135,13 @@ fn build(app: &gtk::Application) {
             let g = widgets::label(&s.group.to_uppercase(), "nav-group");
             // Hidden in the icon-only sidebar, so its items keep to the rows beside it.
             g.add_css_class("compact-hide");
-            if last_group.is_empty() {
+            let first = last_group.is_empty();
+            if first {
                 g.add_css_class("first");
             }
+            // The first group in the app's accent, the others from the theme's [sections.pdf].
+            let section = if first { nyx_ui::sidebar::ACCENT_SECTION.to_string() } else { s.group.to_lowercase().replace(' ', "-") };
+            nyx_ui::sidebar::set_section(&g, &section);
             list.append(&g);
             last_group = s.group;
         }
