@@ -302,16 +302,20 @@ picture.loading {
   box-shadow: 6px 0 24px alpha(@theme_shadow, 0.55);
 }
 
-/* The panel's edge, dragged to resize it: invisible until hovered. */
+/* The panel's edge, dragged to resize it, drawn as the line between panes. */
 
 .panel-handle {
-  min-width: 5px;
-  background: @theme_bg;
+  min-width: 13px;
+  background: transparent;
+  background-image: linear-gradient(@sheet_line, @sheet_line);
+  background-size: 1px 100%;
+  background-position: center;
+  background-repeat: no-repeat;
   transition: background 120ms ease-out;
 }
 
 .panel-handle:hover {
-  background: alpha(@theme_accent, 0.35);
+  background-image: linear-gradient(alpha(@theme_accent, 0.45), alpha(@theme_accent, 0.45));
 }
 
 .side-panel .panel-tabs {
@@ -738,4 +742,11 @@ window.pdf-window button.dialog-nav.active image {
 
 .settings-dialog-main .settings-page.narrow {
   padding: 20px 20px 28px;
+}
+
+/* Full screen shows only the pages: the sheet gives up its inset. */
+window.fullscreen .app-page {
+  margin: 0;
+  border: none;
+  border-radius: 0;
 }
