@@ -26,7 +26,7 @@ pub const APP_ID: &str = "io.github.design_nexus.nyx.Pdf";
 
 const USAGE: &str = "Usage: nyx-pdf [OPTIONS] [FILE…]\n\
 \n\
-  FILE            open this PDF (several files open in tabs)\n\
+  FILE            open this PDF (several files are listed in the sidebar)\n\
   --page N        open FILE on page N (1 is the first)\n\
   --section ID    open (or switch the open window) to a page: library, document, pages, settings\n\
   --toggle        close the window if it's open, otherwise open it (for a keybinding)\n";

@@ -36,94 +36,136 @@
   padding-bottom: 0;
 }
 
-/* ---------- The viewer ---------- */
+/* ---------- Sidebar ---------- */
 
-/* One tab per open file, in a 34 px row over the tool strip. The open one is a
-   soft pill; no lines. */
+/* The icon rail's mark where a group starts: a short bar in its colour. */
+.settings-navigation separator.nav-divider {
+  margin: 8px 14px 6px;
+  min-height: 2px;
+  border-radius: 1px;
+  background: @theme_divider;
+}
 
-/* The tab row, the tool strip and the pages toolbar are each one sidebar row
-   tall (set from the density in code), so their buttons line up with the
-   icon-only sidebar's. */
-.tab-bar {
+.settings-navigation separator.nav-divider:first-child {
+  margin-top: 2px;
+}
+
+/* Read and Pages, under the file you're in. */
+.settings-navigation .subnav {
+  margin: 0 0 4px 18px;
+  padding-left: 8px;
+  border-left: 1px solid @hairline;
+}
+
+.settings-navigation.compact .subnav {
+  margin: 0;
+  padding: 0;
+  border-left: none;
+}
+
+/* An open file with unsaved changes. */
+.settings-navigation .unsaved-dot {
+  min-width: 8px;
+  min-height: 8px;
+  border-radius: 999px;
+  background: @theme_accent;
+}
+
+.settings-navigation .nav-hint {
+  margin: 8px 0 0;
   padding: 0 10px;
-  background: @theme_bg;
+  color: @theme_text_tertiary;
+  font-size: 0.846em;
 }
 
-.settings-page.narrow .tab-bar {
-  padding: 0 6px;
+.settings-navigation .nav-hint image {
+  -gtk-icon-size: 13px;
+  margin-top: 1px;
 }
 
-.tab-bar .tabs {
-  padding: 0 2px;
+/* ---------- Header ---------- */
+
+.key-hint {
+  color: @theme_text_tertiary;
+  font-size: 0.846em;
+  font-feature-settings: "tnum";
 }
 
-.doc-tab {
-  border-radius: var(--nyx-radius-small);
-  padding: 0 2px 0 0;
-  transition: background 120ms ease-out;
-}
-
-.doc-tab:hover {
-  background: @row_hover;
-}
-
-.doc-tab.active {
-  background: alpha(@theme_text, 0.07);
-}
-
-window.pdf-window .doc-tab button.tab-main {
+window.pdf-window .header-search entry {
   min-height: 30px;
-  padding: 0 6px 0 10px;
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  color: @theme_dim_text;
-  font-weight: 400;
 }
 
-window.pdf-window .doc-tab.active button.tab-main {
-  color: @theme_text;
+window.pdf-window button.open-button,
+window.pdf-window menubutton.fit-button > button {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: var(--nyx-radius-small);
+  background: @field;
+  border: none;
+  box-shadow: inset 0 0 0 1px @hairline;
   font-weight: 500;
 }
 
-.doc-tab .tab-icon {
+window.pdf-window menubutton.fit-button > button {
+  padding: 0 8px 0 10px;
+}
+
+window.pdf-window button.open-button:hover,
+window.pdf-window menubutton.fit-button > button:hover {
+  background: mix(@field, @theme_text, 0.06);
+}
+
+window.pdf-window button.open-button .key-hint {
+  margin-left: 4px;
+}
+
+.fit-button image,
+.colour-button image.chevron {
   color: @theme_dim_text;
 }
 
-.doc-tab.active .tab-icon {
-  color: @theme_accent;
+.fit-button image.chevron,
+.colour-button image.chevron {
+  -gtk-icon-size: 11px;
 }
 
-.doc-tab .tab-dirty {
-  color: @theme_accent;
+/* ---------- Page bars ---------- */
+
+.page-bar {
+  min-height: 44px;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid @sheet_line;
+}
+
+.page-title {
+  font-size: 1.077em;
   font-weight: 600;
 }
 
-window.pdf-window .doc-tab button.tab-close {
-  min-width: 22px;
-  min-height: 22px;
-  padding: 0;
-  border-radius: 6px;
-  background: transparent;
-  border-color: transparent;
-  opacity: 0.55;
+.page-sub {
+  margin-left: 4px;
+  color: @theme_text_tertiary;
 }
 
-window.pdf-window .doc-tab button.tab-close:hover {
-  background: @row_hover;
-  opacity: 1;
+window.pdf-window .page-bar button.page-action {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: var(--nyx-radius-small);
+  font-weight: 500;
 }
 
-window.pdf-window .doc-tab button.tab-close image {
-  -gtk-icon-size: 12px;
+window.pdf-window .page-bar button.page-action:not(.suggested-action) {
+  background: @field;
+  border: none;
+  box-shadow: inset 0 0 0 1px @hairline;
 }
 
-/* Save: the view's one primary button, a 32 px square (the accent while there's
-   something to save). */
+/* ---------- The viewer ---------- */
+
+/* Save: the view's one primary button, there while there's something to save. */
 window.pdf-window button.save-button {
-  min-width: 32px;
-  min-height: 32px;
-  padding: 0;
+  min-height: 30px;
+  padding: 0 14px;
   border-radius: var(--nyx-radius-small);
 }
 
@@ -140,15 +182,76 @@ window.pdf-window popover.tool-popover > contents {
   min-width: 220px;
 }
 
-/* The tools, history and saving, on the window's surface. */
+/* The panel, the tools, history and saving: one bar over the page. */
 
 .tool-strip {
-  padding: 0 10px;
-  background: @theme_bg;
+  min-height: 46px;
+  padding: 0 8px;
+  border-bottom: 1px solid @sheet_line;
 }
 
-.settings-page.narrow .tool-strip {
-  padding: 0 6px;
+.tool-strip > box {
+  min-height: 46px;
+}
+
+separator.tool-sep {
+  min-width: 1px;
+  min-height: 18px;
+  margin: 0 4px;
+  background: @hairline;
+}
+
+/* A tool: its icon and name, and a menu of its kinds; the one in use is a pill. */
+.tool {
+  border-radius: var(--nyx-radius-small);
+  transition: background 120ms ease-out;
+}
+
+.tool:hover {
+  background: @row_hover;
+}
+
+.tool.on {
+  background: @nav_active;
+  box-shadow: inset 0 0 0 1px alpha(@theme_accent, 0.3);
+}
+
+window.pdf-window .tool button.tool-main,
+window.pdf-window .tool menubutton.tool-kinds > button {
+  min-height: 30px;
+  min-width: 0;
+  padding: 0 9px 0 8px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: @theme_dim_text;
+  font-weight: 500;
+}
+
+window.pdf-window .tool.has-kinds button.tool-main {
+  padding-right: 2px;
+}
+
+window.pdf-window .tool menubutton.tool-kinds > button {
+  padding: 0 6px 0 2px;
+}
+
+window.pdf-window .tool menubutton.tool-kinds image {
+  -gtk-icon-size: 11px;
+  opacity: 0.7;
+}
+
+window.pdf-window .tool.on button.tool-main,
+window.pdf-window .tool.on menubutton.tool-kinds > button {
+  color: @theme_text;
+}
+
+window.pdf-window .tool.on button.tool-main image {
+  color: @theme_accent;
+}
+
+window.pdf-window .settings-page.narrow .tool button.tool-main {
+  padding: 0 7px;
 }
 
 window.pdf-window button.tb-btn,
@@ -188,7 +291,7 @@ window.pdf-window button.bar-button:disabled {
   opacity: 0.35;
 }
 
-/* Room between groups of tools, in place of a line. */
+/* Room between groups of tools in the pages toolbar. */
 .tb-gap {
   min-width: 10px;
 }
@@ -221,20 +324,22 @@ window.pdf-window .app-header menubutton.bar-button > button:hover {
 }
 
 .page-nav {
-  padding: 0 2px 0 6px;
+  padding: 0 4px;
 }
 
 .page-total {
-  font-size: 12.5px;
   color: @theme_dim_text;
 }
 
 window.pdf-window entry.page-entry {
   min-width: 0;
-  min-height: 28px;
+  min-height: 26px;
   padding: 0 4px;
-  border-radius: var(--nyx-radius-small);
-  font-size: 12.5px;
+  border-radius: 6px;
+  background: @field;
+  border: none;
+  box-shadow: inset 0 0 0 1px @hairline;
+  font-weight: 600;
   font-feature-settings: "tnum";
 }
 
@@ -246,9 +351,9 @@ window.pdf-window entry.page-entry {
   min-height: 28px;
 }
 
-/* The pages sit on the window's surface; no darker well. */
+/* The pages sit in a faint well under the toolbar. */
 .canvas {
-  background: @theme_bg;
+  background: mix(@theme_bg, @theme_text, 0.04);
 }
 
 .page-card {
@@ -295,11 +400,10 @@ picture.loading {
 
 /* ---------- Side panel ---------- */
 
-/* Docked beside the pages on the same surface. Its switch starts on the row
-   after the tool strip, level with the sidebar's third item. */
+/* Docked beside the pages, on the sheet. */
 .side-panel {
   background: @theme_bg;
-  padding: 0 10px 6px;
+  padding: 8px 8px 6px;
 }
 
 /* On a narrow window the panel floats over the pages. */
@@ -326,7 +430,7 @@ picture.loading {
 }
 
 .side-panel .panel-tabs {
-  margin: 0 0 10px;
+  margin: 0 0 8px;
 }
 
 .thumb-list {
@@ -466,16 +570,16 @@ window.pdf-window button.swatch-button.selected {
 }
 
 window.pdf-window menubutton.colour-button > button {
-  min-width: 32px;
-  min-height: 32px;
-  padding: 0;
+  min-height: 30px;
+  padding: 0 6px;
   border-radius: var(--nyx-radius-small);
-  background: transparent;
+  background: @field;
   border: none;
+  box-shadow: inset 0 0 0 1px @hairline;
 }
 
 window.pdf-window menubutton.colour-button > button:hover {
-  background: @row_hover;
+  background: mix(@field, @theme_text, 0.06);
 }
 
 window.pdf-window .colour-row entry {
@@ -572,65 +676,73 @@ window.pdf-window button.signature-choice:hover {
 
 /* ---------- Library ---------- */
 
+/* A grid of covers: the top of page one, paper white like the file, and under
+   it the name, the folder and where you left off. */
 .library-grid {
-  padding: 10px 10px 16px;
+  padding: 16px 20px 20px;
 }
 
 .library-grid flowboxchild {
-  padding: 6px;
+  padding: 0;
   background: transparent;
   outline: none;
-  border-radius: 9px;
 }
 
 window.pdf-window button.pdf-card {
   padding: 0;
-  border-radius: var(--nyx-radius-card);
-  background: @theme_card;
+  background: transparent;
   border: none;
+  box-shadow: none;
   min-height: 0;
+  font-weight: 400;
 }
 
-window.pdf-window button.pdf-card:hover {
-  background: mix(@theme_card, @theme_text, 0.04);
+window.pdf-window button.pdf-card:hover .cover {
+  box-shadow: 0 0 0 2px alpha(@theme_accent, 0.55), 0 1px 4px alpha(#000000, 0.18);
 }
 
-window.pdf-window button.pdf-card:focus-visible {
-  box-shadow: 0 0 0 2px alpha(@theme_accent, 0.72);
+window.pdf-window button.pdf-card:focus-visible .cover {
+  box-shadow: 0 0 0 2px alpha(@theme_accent, 0.85);
 }
 
 .pdf-card .cover {
-  border-radius: var(--nyx-radius-card) var(--nyx-radius-card) 0 0;
-  background: mix(@theme_bg, @theme_muted, 0.4);
+  border-radius: 3px;
+  background: #fdfdfb;
+  box-shadow: 0 0 0 1px alpha(#000000, 0.08), 0 1px 4px alpha(#000000, 0.18);
 }
 
-.pdf-card .card-body {
-  padding: 8px 12px 10px;
+.pdf-card .cover.missing {
+  background: mix(@theme_bg, @theme_muted, 0.4);
 }
 
 .pdf-card .card-title {
   font-weight: 600;
 }
 
+.pdf-card .card-place {
+  font-size: 0.846em;
+  color: @theme_text_tertiary;
+}
+
 .pdf-card .card-meta {
-  font-size: 12px;
+  font-size: 0.846em;
   color: @theme_dim_text;
 }
 
-.pdf-card .card-progress {
-  min-height: 3px;
-}
-
 progressbar.card-progress trough {
-  min-height: 3px;
+  min-height: 4px;
   border-radius: 999px;
   background: @track;
 }
 
 progressbar.card-progress progress {
-  min-height: 3px;
+  min-height: 4px;
   border-radius: 999px;
   background: @theme_accent;
+}
+
+progressbar.card-progress.done progress {
+  background: @theme_success;
 }
 
 /* ---------- Page organiser ---------- */
@@ -662,10 +774,12 @@ window.pdf-window button.page-tile.drop-before {
   box-shadow: 0 2px 8px alpha(@theme_shadow, 0.45);
 }
 
-/* A page's toolbar sits above its content on the same surface. */
+/* The pages toolbar: one bar over the grid, like the reader's. */
 .pages-toolbar {
   margin: 0;
-  padding: 0 12px 0 14px;
+  min-height: 46px;
+  padding: 0 8px;
+  border-bottom: 1px solid @sheet_line;
 }
 
 window.pdf-window button.tb-btn.danger:hover {
@@ -680,6 +794,10 @@ window.pdf-window button.tb-btn.destructive-action {
   padding: 0 10px;
   background: alpha(@theme_danger, 0.12);
   color: @theme_danger;
+}
+
+.pages-grid {
+  padding: 10px 14px 20px;
 }
 
 .pages-grid flowboxchild {

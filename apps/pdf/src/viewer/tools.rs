@@ -27,8 +27,15 @@ pub enum Tool {
 }
 
 impl Tool {
-    pub const ALL: [Tool; 9] =
-        [Tool::Select, Tool::Highlight, Tool::Underline, Tool::Strike, Tool::Ink, Tool::Note, Tool::TextBox, Tool::EditText, Tool::Sign];
+    /// The toolbar's buttons, in order: a tool, or a few kinds of one under a menu.
+    pub const GROUPS: [&'static [Tool]; 6] = [
+        &[Tool::Select],
+        &[Tool::Highlight, Tool::Underline, Tool::Strike],
+        &[Tool::Ink],
+        &[Tool::Note],
+        &[Tool::TextBox, Tool::EditText],
+        &[Tool::Sign],
+    ];
 
     pub fn icon(self) -> &'static str {
         match self {
@@ -41,6 +48,43 @@ impl Tool {
             Tool::TextBox => "npdf-textbox-symbolic",
             Tool::EditText => "npdf-edit-text-symbolic",
             Tool::Sign => "npdf-sign-symbolic",
+        }
+    }
+
+    /// The tool's name in its menu.
+    pub fn name(self) -> &'static str {
+        match self {
+            Tool::Select => "Select",
+            Tool::Highlight => "Highlight",
+            Tool::Underline => "Underline",
+            Tool::Strike => "Strike out",
+            Tool::Ink => "Draw",
+            Tool::Note => "Note",
+            Tool::TextBox => "Text box",
+            Tool::EditText => "Edit text",
+            Tool::Sign => "Sign",
+        }
+    }
+
+    /// The name on its button in the toolbar.
+    pub fn label(self) -> &'static str {
+        match self {
+            Tool::TextBox => "Text",
+            t => t.name(),
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Tool::Select => "V",
+            Tool::Highlight => "H",
+            Tool::Underline => "U",
+            Tool::Strike => "X",
+            Tool::Ink => "D",
+            Tool::Note => "N",
+            Tool::TextBox => "T",
+            Tool::EditText => "E",
+            Tool::Sign => "S",
         }
     }
 

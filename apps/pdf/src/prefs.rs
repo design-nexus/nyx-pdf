@@ -12,10 +12,11 @@ pub struct Prefs {
     pub reduce_motion: bool,
     pub glow: bool,
     pub last_section: String,
-    /// The sidebar shows only icons, whatever the window width.
-    pub sidebar_collapsed: bool,
-    /// The same, while reading a document (where the page wants the room).
-    pub sidebar_reading_collapsed: bool,
+    /// The sidebar shows only icons, whatever the window width. (Named afresh
+    /// when the sidebar gained labels and open files, so it starts expanded.)
+    pub sidebar_rail: bool,
+    /// The same, while reading a document.
+    pub sidebar_reading_rail: bool,
     /// fit-width, fit-page or 100.
     pub default_zoom: String,
     /// How pages are coloured: off, invert or tint.
@@ -54,15 +55,15 @@ impl Default for Prefs {
             reduce_motion: false,
             glow: true,
             last_section: "library".into(),
-            sidebar_collapsed: false,
-            sidebar_reading_collapsed: true,
+            sidebar_rail: false,
+            sidebar_reading_rail: false,
             default_zoom: "fit-width".into(),
             page_colors: "off".into(),
             continuous: true,
             spread: "single".into(),
             panel_visible: true,
             panel_tab: "thumbs".into(),
-            panel_width: 236,
+            panel_width: 180,
             remember_page: true,
             author: String::new(),
             highlight_color: "#ffd60a".into(),

@@ -75,8 +75,12 @@ pub fn build(page: &Page) {
     count.add_css_class("tnum");
     count.set_valign(gtk::Align::Center);
     count.set_margin_start(8);
-    let save = tool("document-save-symbolic", "Save (Ctrl+S)");
+    let save = gtk::Button::with_label("Save");
+    save.set_tooltip_text(Some("Save (Ctrl+S)"));
+    save.add_css_class("suggested-action");
     save.add_css_class("save-button");
+    save.set_valign(gtk::Align::Center);
+    save.set_visible(false);
     save.connect_clicked(|_| doc::save());
     let undo = tool("edit-undo-symbolic", "Undo (Ctrl+Z)");
     undo.connect_clicked(|_| doc::undo());
@@ -114,12 +118,7 @@ fn refresh_saved() {
     let Some(st) = state() else { return };
     let d = doc::current();
     let dirty = d.as_ref().is_some_and(|d| d.dirty());
-    st.save.set_sensitive(dirty);
-    if dirty {
-        st.save.add_css_class("suggested-action");
-    } else {
-        st.save.remove_css_class("suggested-action");
-    }
+    st.save.set_visible(dirty);
     st.undo.set_sensitive(d.as_ref().is_some_and(|d| d.can_undo()));
 }
 

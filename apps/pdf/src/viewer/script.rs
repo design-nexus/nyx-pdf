@@ -9,6 +9,7 @@
 //! `panel` (toggle) · `tab thumbs|outline|markup` · `colours off|invert|tint` · `theme ID` · `wait MS`
 //! `open PATH` (in a new tab) · `layout single|pairs|book` · `scroll continuous|single` · `present`
 //! `back` · `forward` · `jump N` · `resize PAGE X Y` (drag the selected annotation's corner there)
+//! `menu zoom|more|highlight|text` (open one of the reader's menus)
 //! `status` and `windows` print what's open, for checking from a terminal · `recover` (offer crash recovery) · `clearform` · `printpdf PATH` (print to a file)
 
 use super::{Tool, tools, view};
@@ -205,6 +206,7 @@ fn run(step: &str) -> Option<u64> {
             super::relayout();
         }
         "present" => super::toggle_presenting(),
+        "menu" => super::open_menu(rest.trim()),
         "back" => super::go_back(),
         "forward" => super::go_forward(),
         "jump" => {

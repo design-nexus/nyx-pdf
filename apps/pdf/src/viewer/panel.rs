@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 /// The panel's width less its padding: what a thumbnail gets.
 fn thumb_w(panel_w: i32) -> i32 {
-    (panel_w - 86).max(80)
+    (panel_w - 60).max(80)
 }
 
 pub struct Panel {

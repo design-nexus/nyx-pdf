@@ -1,13 +1,14 @@
-//! The main window: the header (the app and where you are, the sidebar toggle;
-//! the open file's page and view controls while reading; search and settings),
-//! the navigation sidebar and a stack of pages built the first time they're
-//! shown. Settings opens as a card over the window (see `settings_dialog`).
+//! The main window: the header (the app and the sidebar toggle; the file search
+//! and Open, or while reading the open file's page and view controls; settings),
+//! the navigation sidebar (the library, combining files, and the open files, the
+//! current one with Read and Pages under it) and a stack of pages built the first
+//! time they're shown. Settings opens as a card over the window (see `settings_dialog`).
 
 use crate::sections::{self, Section};
-use crate::{doc, prefs, settings_dialog, theme, viewer, widgets};
+use crate::{doc, prefs, recent, settings_dialog, theme, viewer, widgets};
 use gtk::prelude::*;
-use nyx_ui::chrome;
 use gtk::{gdk, glib};
+use nyx_ui::{chrome, sidebar};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -16,7 +17,8 @@ struct Ui {
     window: gtk::ApplicationWindow,
     stack: gtk::Stack,
     nav: gtk::Box,
-    nav_items: HashMap<String, gtk::Button>,
+    /// The sidebar's rows, rebuilt as files open and close.
+    nav_list: gtk::Box,
     pages: HashMap<String, gtk::Widget>,
     sections: Vec<Section>,
     current: String,
@@ -24,7 +26,9 @@ struct Ui {
     /// The header, hidden in fullscreen and reading mode.
     chrome: Vec<gtk::Widget>,
     search: gtk::SearchEntry,
-    header: chrome::AppHeader,
+    /// The file search and Open, in the header everywhere but the open file.
+    lib_center: gtk::Widget,
+    lib_end: gtk::Widget,
     /// The open file's page controls (middle) and view controls (end), filled in
     /// when the document page is built and shown only while it is.
     doc_center: gtk::Box,
@@ -36,6 +40,7 @@ thread_local! {
     static NARROW: Cell<bool> = const { Cell::new(false) };
     /// Set once the user has decided what to do about unsaved changes, so closing goes through.
     static FORCE_CLOSE: Cell<bool> = const { Cell::new(false) };
+    static NAV_QUEUED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn ui() -> Option<Rc<RefCell<Ui>>> {
@@ -83,7 +88,7 @@ fn install_icons() {
     }
     const ICONS: &[(&str, &str)] = icons![
         "library", "document", "pages", "select", "highlight", "underline", "strike", "ink", "note", "textbox", "edit-text",
-        "sign", "fit-width", "fit-page", "thumbs", "outline", "rotate-left", "rotate-right", "layout",
+        "sign", "fit-width", "fit-page", "thumbs", "outline", "rotate-left", "rotate-right", "layout", "merge",
     ];
     let dir = crate::paths::cache_dir().join("icons");
     for (name, svg) in ICONS {
@@ -98,18 +103,181 @@ fn install_icons() {
     }
 }
 
-fn nav_button(icon: &str, title: &str, tooltip: &str) -> (gtk::Button, gtk::Label) {
-    let button = gtk::Button::new();
-    button.add_css_class("nav-item");
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    content.append(&gtk::Image::from_icon_name(icon));
-    let l = widgets::label(title, "nav-label");
+/// The icon rail's mark where a group starts: a short bar in its colour.
+fn nav_divider(section: &str) -> gtk::Separator {
+    let bar = gtk::Separator::new(gtk::Orientation::Horizontal);
+    bar.add_css_class("nav-divider");
+    bar.add_css_class("compact-show");
+    sidebar::set_section(&bar, section);
+    bar.set_visible(false);
+    bar
+}
+
+/// A file's name without `.pdf`, as the library shows it.
+fn stem(d: &doc::Doc) -> String {
+    d.path().file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| d.file_name())
+}
+
+/// Rebuild the sidebar on the next idle (several changes often arrive together).
+pub fn refresh_nav() {
+    if NAV_QUEUED.with(|q| q.replace(true)) {
+        return;
+    }
+    glib::idle_add_local_once(|| {
+        NAV_QUEUED.with(|q| q.set(false));
+        build_nav();
+    });
+}
+
+/// PDF (the library and Combine PDFs), then the open files; the one you're in
+/// has Read and Pages under it.
+fn build_nav() {
+    let Some(ui) = ui() else { return };
+    let (list, current) = {
+        let u = ui.borrow();
+        (u.nav_list.clone(), u.current.clone())
+    };
+    let section_item = |id: &str| {
+        let u = ui.borrow();
+        let s = u.sections.iter().find(|s| s.id == id).expect("a section for each nav item");
+        let item = sidebar::nav_item(s.icon, s.title, s.description);
+        item.set_active(current == id);
+        let id = s.id;
+        item.button.connect_clicked(move |_| navigate(id));
+        item
+    };
+    while let Some(c) = list.first_child() {
+        list.remove(&c);
+    }
+    list.append(&nav_divider(sidebar::ACCENT_SECTION));
+    let g = sidebar::group_label("PDF", true);
+    sidebar::set_section(&g, sidebar::ACCENT_SECTION);
+    list.append(&g);
+    let library = section_item("library");
+    library.set_count(Some(recent::list().len() as u64));
+    list.append(&library.button);
+    let merge = sidebar::nav_item("npdf-merge-symbolic", "Combine PDFs", "Join several PDFs into a new file");
+    merge.button.connect_clicked(|_| sections::pages::merge_dialog());
+    list.append(&merge.button);
+
+    let open = doc::all();
+    if !open.is_empty() {
+        list.append(&nav_divider("open-file"));
+        let g = sidebar::group_label("Open files", false);
+        sidebar::set_section(&g, "open-file");
+        list.append(&g);
+        let cur = doc::current();
+        let in_file = matches!(current.as_str(), "document" | "pages");
+        for d in open {
+            let is_cur = cur.as_ref().is_some_and(|c| Rc::ptr_eq(c, &d));
+            let path = crate::paths::pretty(&d.path());
+            let tip = if d.dirty() { format!("{path}\nUnsaved changes") } else { path };
+            let item = sidebar::nav_item("npdf-document-symbolic", &stem(&d), &tip);
+            item.set_active(is_cur && in_file);
+            if d.dirty() {
+                let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                dot.add_css_class("unsaved-dot");
+                dot.add_css_class("compact-hide");
+                dot.set_valign(gtk::Align::Center);
+                if let Some(content) = item.button.child().and_downcast::<gtk::Box>() {
+                    content.append(&dot);
+                }
+            }
+            let weak = Rc::downgrade(&d);
+            item.button.connect_clicked(move |_| {
+                if let Some(d) = weak.upgrade() {
+                    doc::switch_to(&d);
+                    navigate("document");
+                }
+            });
+            // A middle click closes the file; a right-click offers to.
+            let middle = gtk::GestureClick::new();
+            middle.set_button(gdk::BUTTON_MIDDLE);
+            let weak = Rc::downgrade(&d);
+            middle.connect_released(move |_, _, _, _| {
+                if let Some(d) = weak.upgrade() {
+                    viewer::close_doc(&d);
+                }
+            });
+            item.button.add_controller(middle);
+            let (weak, anchor) = (Rc::downgrade(&d), list.clone());
+            nyx_ui::menu::on_right_click(&item.button, move |w, x, y| {
+                let Some(d) = weak.upgrade() else { return };
+                let at = w.compute_point(&anchor, &gtk::graphene::Point::new(x as f32, y as f32)).map_or((x, y), |p| (f64::from(p.x()), f64::from(p.y())));
+                let path = d.path();
+                let weak = Rc::downgrade(&d);
+                nyx_ui::menu::popup_at(
+                    &anchor,
+                    at.0,
+                    at.1,
+                    vec![
+                        nyx_ui::menu::item("Show in folder", move || crate::cmd::show_in_folder(&path)),
+                        nyx_ui::menu::separator(),
+                        nyx_ui::menu::item("Close", move || {
+                            if let Some(d) = weak.upgrade() {
+                                viewer::close_doc(&d);
+                            }
+                        })
+                        .key("Ctrl+W"),
+                    ],
+                );
+            });
+            list.append(&item.button);
+            if is_cur && in_file {
+                let sub = gtk::Box::new(gtk::Orientation::Vertical, 1);
+                sub.add_css_class("subnav");
+                sub.append(&section_item("document").button);
+                let pages = section_item("pages");
+                pages.set_count(Some(d.n_pages() as u64));
+                sub.append(&pages.button);
+                list.append(&sub);
+            }
+        }
+    }
+
+    let hint = widgets::hbox(8);
+    hint.add_css_class("nav-hint");
+    hint.add_css_class("compact-hide");
+    let icon = gtk::Image::from_icon_name("dialog-information-symbolic");
+    icon.set_valign(gtk::Align::Start);
+    hint.append(&icon);
+    let l = widgets::label("Drop PDFs anywhere to open them", "");
+    l.set_wrap(true);
+    l.set_xalign(0.0);
     l.set_hexpand(true);
-    l.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    content.append(&l);
-    button.set_child(Some(&content));
-    button.set_tooltip_text(Some(tooltip));
-    (button, l)
+    hint.append(&l);
+    list.append(&hint);
+    refresh_compact();
+}
+
+/// The header's file search, with its key at the right while it's empty.
+fn search_field(search: &gtk::SearchEntry) -> gtk::Overlay {
+    let field = gtk::Overlay::new();
+    field.add_css_class("header-search");
+    field.set_child(Some(search));
+    let key = widgets::label("Ctrl F", "key-hint");
+    key.set_halign(gtk::Align::End);
+    key.set_valign(gtk::Align::Center);
+    key.set_margin_end(10);
+    key.set_can_target(false);
+    field.add_overlay(&key);
+    search.connect_search_changed(move |e| key.set_visible(e.text().is_empty()));
+    field
+}
+
+/// Open, with its key.
+fn open_button() -> gtk::Button {
+    let b = gtk::Button::new();
+    b.add_css_class("open-button");
+    b.set_valign(gtk::Align::Center);
+    let content = widgets::hbox(6);
+    content.append(&gtk::Image::from_icon_name("folder-symbolic"));
+    content.append(&widgets::label("Open", ""));
+    content.append(&widgets::label("Ctrl O", "key-hint"));
+    b.set_child(Some(&content));
+    b.set_tooltip_text(Some("Open files; each is listed in the sidebar (Ctrl+O)"));
+    b.connect_clicked(|_| doc::open_dialog());
+    b
 }
 
 fn build(app: &gtk::Application) {
@@ -126,32 +294,7 @@ fn build(app: &gtk::Application) {
     let nav = gtk::Box::new(gtk::Orientation::Vertical, 0);
     nav.add_css_class("settings-navigation");
     nav.set_hexpand(false);
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let mut nav_items = HashMap::new();
-    let mut last_group = "";
-    // Settings opens as a dialog from the top bar, so it has no nav item.
-    for s in sections.iter().filter(|s| s.id != "settings") {
-        if s.group != last_group {
-            let g = widgets::label(&s.group.to_uppercase(), "nav-group");
-            // Hidden in the icon-only sidebar, so its items keep to the rows beside it.
-            g.add_css_class("compact-hide");
-            let first = last_group.is_empty();
-            if first {
-                g.add_css_class("first");
-            }
-            // The first group in the app's accent, the others from the theme's [sections.pdf].
-            let section = if first { nyx_ui::sidebar::ACCENT_SECTION.to_string() } else { s.group.to_lowercase().replace(' ', "-") };
-            nyx_ui::sidebar::set_section(&g, &section);
-            list.append(&g);
-            last_group = s.group;
-        }
-        let (button, label) = nav_button(s.icon, s.title, s.description);
-        label.add_css_class("compact-hide");
-        let id = s.id;
-        button.connect_clicked(move |_| navigate(id));
-        list.append(&button);
-        nav_items.insert(s.id.to_string(), button);
-    }
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 1);
     let nav_scroll = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         // Scrolls with wheel, trackpad and keyboard; no visible scrollbar.
@@ -174,8 +317,8 @@ fn build(app: &gtk::Application) {
     content.append(&stack);
 
     // ----- Header -----
-    // The app and where you are, the sidebar toggle; the open file's page in the
-    // middle (or the file search); its view controls, search and Settings at the end.
+    // The app and the sidebar toggle; the file search in the middle and Open at the
+    // end, or while reading the open file's page and its view controls; Settings.
     let header = chrome::app_header(&window, "npdf-document-symbolic", "PDF");
     let toggle = widgets::bar_button("sidebar-show-symbolic", "Collapse the sidebar (Ctrl+B)");
     toggle.connect_clicked(|_| toggle_sidebar());
@@ -184,19 +327,22 @@ fn build(app: &gtk::Application) {
     doc_center.set_visible(false);
     header.center.append(&doc_center);
     let search = search_entry();
-    header.center.append(&search);
+    let lib_center = search_field(&search);
+    header.center.append(&lib_center);
     let doc_end = widgets::hbox(2);
     doc_end.set_visible(false);
     header.end.set_spacing(4);
     header.end.append(&doc_end);
-    let find = widgets::bar_button("system-search-symbolic", "Search the document, or your files (Ctrl+F)");
-    find.connect_clicked(|_| find_files());
-    header.end.append(&find);
+    let lib_end = open_button();
+    lib_end.set_margin_end(4);
+    header.end.append(&lib_end);
     header.end.append(&chrome::settings_button(settings_dialog::open));
 
     let frame = nyx_ui::frame::AppFrame::new(&header.root);
     frame.set_sidebar(&nav);
     frame.set_page(&content);
+    // The page bars and the toolbar run to the sheet's edges.
+    frame.set_flush(true);
     let overlay = frame.install(&window);
 
     install_keys(&window);
@@ -280,20 +426,22 @@ fn build(app: &gtk::Application) {
         window: window.clone(),
         stack,
         nav,
-        nav_items,
+        nav_list: list,
         pages: HashMap::new(),
         sections,
         current: String::new(),
         overlay,
         chrome: vec![header.root.clone().upcast()],
         search,
-        header,
+        lib_center: lib_center.upcast(),
+        lib_end: lib_end.upcast(),
         doc_center,
         doc_end,
     };
     UI.with(|u| *u.borrow_mut() = Some(Rc::new(RefCell::new(ui))));
+    build_nav();
 
-    // The window title and the header follow the open document.
+    // The window title, the header and the open files follow the documents.
     let w = window.clone();
     doc::subscribe(&window, move |c| {
         if matches!(c, doc::Change::Opened | doc::Change::Closed | doc::Change::Dirty) {
@@ -303,44 +451,32 @@ fn build(app: &gtk::Application) {
             }));
             refresh_header();
         }
+        if matches!(c, doc::Change::Opened | doc::Change::Closed | doc::Change::Dirty | doc::Change::Files | doc::Change::Structure) {
+            refresh_nav();
+        }
     });
 }
 
-/// The subtitle (the page, or the open file while reading) and the controls that
-/// belong to the open file, shown only while it's on screen.
+/// While reading, the open file's page and view controls; elsewhere the file
+/// search and Open.
 fn refresh_header() {
     let Some(ui) = ui() else { return };
     let u = ui.borrow();
     let reading = u.current == "document" && doc::current().is_some();
-    let subtitle = match doc::current() {
-        Some(d) if reading => d.file_name(),
-        _ => u.sections.iter().find(|s| s.id == u.current).map(|s| s.title.to_string()).unwrap_or_default(),
-    };
-    u.header.set_subtitle(&subtitle);
-    u.header.subtitle.set_tooltip_text(doc::current().filter(|_| reading).map(|d| crate::paths::pretty(&d.path())).as_deref());
     u.doc_center.set_visible(reading && u.doc_center.first_child().is_some());
     u.doc_end.set_visible(reading && u.doc_end.first_child().is_some());
-    let search = u.search.clone();
-    drop(u);
-    // The file search belongs to the library; reading has its own.
-    if reading && search.is_visible() {
-        search.set_text("");
-        search.set_visible(false);
-    }
+    u.lib_center.set_visible(!reading);
+    u.lib_end.set_visible(!reading);
 }
 
-/// The file search, in the header: hidden until Ctrl+F or the search button.
+/// The file search, in the middle of the header.
 fn search_entry() -> gtk::SearchEntry {
     let search = gtk::SearchEntry::new();
-    search.set_placeholder_text(Some("Search files"));
+    search.set_placeholder_text(Some("Search your files"));
     search.add_css_class("bar-search");
-    search.set_width_chars(24);
-    search.set_visible(false);
+    search.set_width_chars(30);
     search.connect_search_changed(|e| on_search(&e.text()));
-    search.connect_stop_search(|e| {
-        e.set_text("");
-        e.set_visible(false);
-    });
+    search.connect_stop_search(|e| e.set_text(""));
     search
 }
 
@@ -353,13 +489,12 @@ fn find_files() {
     navigate("library");
     let Some(ui) = ui() else { return };
     let search = ui.borrow().search.clone();
-    search.set_visible(true);
     search.grab_focus();
 }
 
 /// Every keyboard shortcut, for the shortcuts dialog and Settings.
 pub const SHORTCUTS: &[(&[&str], &str)] = &[
-    (&["Ctrl", "O"], "Open files (each in its own tab)"),
+    (&["Ctrl", "O"], "Open files (each is listed in the sidebar)"),
     (&["Ctrl", "S"], "Save"),
     (&["Ctrl", "Shift", "S"], "Save a copy as…"),
     (&["Ctrl", "P"], "Print"),
@@ -430,11 +565,11 @@ pub fn overlay() -> Option<gtk::Overlay> {
     ui().map(|u| u.borrow().overlay.clone())
 }
 
-/// While reading, the sidebar has its own collapsed state (icons only, by default),
-/// so the page gets the room; elsewhere it follows `sidebar_collapsed`.
+/// While reading, the sidebar has its own collapsed state, so the page can have
+/// the room; elsewhere it follows `sidebar_rail`.
 fn collapsed_here() -> bool {
     let p = prefs::get();
-    if current() == "document" { p.sidebar_reading_collapsed } else { p.sidebar_collapsed }
+    if current() == "document" { p.sidebar_reading_rail } else { p.sidebar_rail }
 }
 
 /// The sidebar shows only icons when the window is narrow or the user collapsed it.
@@ -442,45 +577,32 @@ fn refresh_compact() {
     let Some(ui) = ui() else { return };
     let nav = ui.borrow().nav.clone();
     let compact = narrow() || collapsed_here();
-    if compact {
-        nav.add_css_class("compact");
-    } else {
-        nav.remove_css_class("compact");
-    }
-    set_compact_hidden(&nav, compact);
+    sidebar::set_compact(&nav, compact);
+    show_compact_marks(nav.upcast_ref(), compact);
 }
 
 pub fn toggle_sidebar() {
     let reading = current() == "document";
     prefs::update(|p| {
         if reading {
-            p.sidebar_reading_collapsed = !p.sidebar_reading_collapsed;
+            p.sidebar_reading_rail = !p.sidebar_reading_rail;
         } else {
-            p.sidebar_collapsed = !p.sidebar_collapsed;
+            p.sidebar_rail = !p.sidebar_rail;
         }
     });
     refresh_compact();
 }
 
-/// Hide everything marked `compact-hide` in the sidebar when it's icon-only.
-fn set_compact_hidden(root: &gtk::Box, compact: bool) {
-    fn walk(w: &gtk::Widget, compact: bool) {
-        if w.has_css_class("compact-hide") {
-            w.set_visible(!compact);
-        }
-        // Icon-only: centre the icon in its pill.
-        if w.has_css_class("nav-item")
-            && let Some(content) = w.downcast_ref::<gtk::Button>().and_then(|b| b.child())
-        {
-            content.set_halign(if compact { gtk::Align::Center } else { gtk::Align::Fill });
-        }
-        let mut child = w.first_child();
-        while let Some(c) = child {
-            walk(&c, compact);
-            child = c.next_sibling();
-        }
+/// Show what's marked `compact-show` (the rail's group bars) only on the icon rail.
+fn show_compact_marks(w: &gtk::Widget, compact: bool) {
+    if w.has_css_class("compact-show") {
+        w.set_visible(compact);
     }
-    walk(root.upcast_ref(), compact);
+    let mut child = w.first_child();
+    while let Some(c) = child {
+        show_compact_marks(&c, compact);
+        child = c.next_sibling();
+    }
 }
 
 fn install_keys(window: &gtk::ApplicationWindow) {
@@ -622,10 +744,9 @@ fn install_keys(window: &gtk::ApplicationWindow) {
             gdk::Key::F5 if in_doc => viewer::toggle_presenting(),
             gdk::Key::Escape if w2.is_fullscreen() => set_fullscreen(false),
             gdk::Key::Escape if READING.with(|r| r.get()) => toggle_reading(),
-            gdk::Key::Escape if search.as_ref().is_some_and(|s| s.is_visible()) => {
+            gdk::Key::Escape if search.as_ref().is_some_and(|s| s.is_mapped() && !s.text().is_empty()) => {
                 if let Some(s) = &search {
                     s.set_text("");
-                    s.set_visible(false);
                 }
             }
             gdk::Key::Escape if !typing && current() == "document" => viewer::escape(),
@@ -728,6 +849,7 @@ fn set_narrow(narrow: bool) {
         mark_page(page, narrow);
     }
     viewer::set_narrow(narrow);
+    sections::library::set_narrow(narrow);
 }
 
 pub fn narrow() -> bool {
@@ -795,12 +917,6 @@ pub fn navigate(id: &str) {
         return;
     }
     let mut u = ui.borrow_mut();
-    if let Some(prev) = u.nav_items.get(&u.current) {
-        prev.remove_css_class("active");
-    }
-    if let Some(b) = u.nav_items.get(&id) {
-        b.add_css_class("active");
-    }
     u.stack.set_visible_child_name(&id);
     let changed = u.current != id;
     u.current = id.clone();
@@ -808,6 +924,7 @@ pub fn navigate(id: &str) {
     prefs::update(|p| p.last_section = id);
     refresh_header();
     if changed {
+        refresh_nav();
         refresh_compact();
     }
 }

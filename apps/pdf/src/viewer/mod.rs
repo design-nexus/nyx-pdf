@@ -15,7 +15,7 @@ mod tools;
 
 use crate::doc::{self, Change, Doc, geom::Rect, render};
 use crate::widgets::{self, Page};
-use crate::{paths, prefs, theme, window};
+use crate::{prefs, theme, window};
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use pageview::PageView;
@@ -109,7 +109,7 @@ pub struct View {
     colour: RefCell<String>,
     colour_css: gtk::CssProvider,
     tool_colours: RefCell<HashMap<Tool, String>>,
-    tool_buttons: RefCell<Vec<(Tool, gtk::ToggleButton)>>,
+    tool_groups: Vec<Rc<ToolGroup>>,
     colour_btn: gtk::MenuButton,
     colour_row: RefCell<Option<gtk::Box>>,
     options: gtk::Box,
@@ -123,13 +123,13 @@ pub struct View {
     syncing: Cell<bool>,
     page_entry: gtk::Entry,
     total: gtk::Label,
-    zoom_label: gtk::Label,
+    /// The zoom menu's face: "Fit width", "Fit page" or the zoom.
+    fit_label: gtk::Label,
     undo_btn: gtk::Button,
     redo_btn: gtk::Button,
     pub back_btn: gtk::Button,
     forward_btn: gtk::Button,
     save_btn: gtk::Button,
-    tabs: gtk::Box,
     chrome: gtk::Box,
     banner: gtk::Box,
     disk_banner: gtk::Box,
@@ -139,8 +139,9 @@ pub struct View {
     right: gtk::Box,
     /// Back, forward and the page number, for the window header's middle.
     head_center: gtk::Box,
-    /// Zoom, fit, layout and the more menu, for the end of the window header.
+    /// The zoom and layout menu, find and the more menu, for the end of the window header.
     head_end: gtk::Box,
+    fit_btn: gtk::MenuButton,
     more_btn: gtk::MenuButton,
     pub search: search::Search,
     programmatic: Cell<bool>,
@@ -218,11 +219,91 @@ fn icon_btn(icon: &str, tooltip: &str) -> gtk::Button {
     b
 }
 
-/// Room between groups of tools.
-fn sep() -> gtk::Box {
-    let s = widgets::hbox(0);
-    s.add_css_class("tb-gap");
+/// The line between groups of tools.
+fn sep() -> gtk::Separator {
+    let s = gtk::Separator::new(gtk::Orientation::Vertical);
+    s.add_css_class("tool-sep");
+    s.set_valign(gtk::Align::Center);
     s
+}
+
+/// A tool's button in the toolbar: its icon and name, and for a tool with kinds
+/// (highlight, underline, strike out) a menu of them. It shows the kind in use.
+struct ToolGroup {
+    tools: &'static [Tool],
+    current: Cell<Tool>,
+    toggle: gtk::ToggleButton,
+    icon: gtk::Image,
+    label: gtk::Label,
+    kinds: Option<gtk::MenuButton>,
+}
+
+impl ToolGroup {
+    fn new(tools: &'static [Tool], first: &mut Option<gtk::ToggleButton>) -> (Rc<ToolGroup>, gtk::Box) {
+        let t = tools[0];
+        let wrap = widgets::hbox(0);
+        wrap.add_css_class("tool");
+        wrap.set_valign(gtk::Align::Center);
+        let toggle = gtk::ToggleButton::new();
+        toggle.add_css_class("tool-main");
+        let content = widgets::hbox(6);
+        let icon = gtk::Image::from_icon_name(t.icon());
+        content.append(&icon);
+        let label = widgets::label(t.label(), "tool-name");
+        content.append(&label);
+        toggle.set_child(Some(&content));
+        toggle.set_tooltip_text(Some(&t.tooltip()));
+        toggle.update_property(&[gtk::accessible::Property::Label(t.name())]);
+        match first {
+            Some(f) => toggle.set_group(Some(f)),
+            None => *first = Some(toggle.clone()),
+        }
+        wrap.append(&toggle);
+        let mut kinds = None;
+        if tools.len() > 1 {
+            wrap.add_css_class("has-kinds");
+            let more = gtk::MenuButton::new();
+            more.add_css_class("tool-kinds");
+            more.set_icon_name("pan-down-symbolic");
+            more.set_tooltip_text(Some(&format!("Kinds of {}", t.name().to_lowercase())));
+            let pop = gtk::Popover::new();
+            pop.add_css_class("menu-popover");
+            pop.set_has_arrow(false);
+            let bx = widgets::vbox(2);
+            bx.add_css_class("menu-box");
+            for &k in tools {
+                let b = menu_item(&pop, k.name(), k.key(), move || set_tool(k));
+                if let Some(row) = b.child().and_downcast::<gtk::Box>() {
+                    row.prepend(&gtk::Image::from_icon_name(k.icon()));
+                }
+                bx.append(&b);
+            }
+            pop.set_child(Some(&bx));
+            more.set_popover(Some(&pop));
+            wrap.append(&more);
+            kinds = Some(more);
+        }
+        let g = Rc::new(ToolGroup { tools, current: Cell::new(t), toggle: toggle.clone(), icon, label, kinds });
+        let (g2, w2) = (g.clone(), wrap.clone());
+        toggle.connect_toggled(move |b| {
+            if b.is_active() {
+                w2.add_css_class("on");
+                set_tool(g2.current.get());
+            } else {
+                w2.remove_css_class("on");
+            }
+        });
+        (g, wrap)
+    }
+
+    /// Show `t`, one of this button's kinds.
+    fn show(&self, t: Tool) {
+        self.current.set(t);
+        self.icon.set_icon_name(Some(t.icon()));
+        self.label.set_text(t.label());
+        self.toggle.set_tooltip_text(Some(&t.tooltip()));
+        self.toggle.update_property(&[gtk::accessible::Property::Label(t.name())]);
+    }
 }
 
 /// A row in a menu popover: the action on the left, its key on the right.
@@ -259,6 +340,7 @@ pub fn build(page: &Page) {
     v.show_colour(&c);
     v.fill_options();
     v.mark_page_colours();
+    set_narrow(window::narrow());
     // Show whatever is already open (a file given on the command line).
     if doc::current().is_some() {
         v.restore_view_state();
@@ -290,87 +372,46 @@ impl View {
         let chrome = widgets::vbox(0);
         root.append(&chrome);
 
-        // ----- Tabs -----
-        let tab_bar = widgets::hbox(4);
-        tab_bar.add_css_class("tab-bar");
-        widgets::follow_row_height(&tab_bar);
-        let tabs = widgets::hbox(2);
-        tabs.add_css_class("tabs");
-        tabs.set_valign(gtk::Align::Center);
-        let tab_scroll = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::External)
-            .vscrollbar_policy(gtk::PolicyType::Never)
-            .hexpand(true)
-            .child(&tabs)
-            .build();
-        tab_scroll.set_propagate_natural_height(true);
-        // A vertical wheel moves along the tabs.
-        let wheel = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
-        let ts = tab_scroll.clone();
-        wheel.connect_scroll(move |_, _, dy| {
-            let a = ts.hadjustment();
-            a.set_value(a.value() + dy * 40.0);
-            glib::Propagation::Stop
-        });
-        tab_scroll.add_controller(wheel);
-        tab_bar.append(&tab_scroll);
-        let open_btn = icon_btn("list-add-symbolic", "Open a file in a new tab (Ctrl+O)");
-        open_btn.add_css_class("tb-btn");
-        open_btn.set_valign(gtk::Align::Center);
-        open_btn.connect_clicked(|_| doc::open_dialog());
-        tab_bar.append(&open_btn);
-        chrome.append(&tab_bar);
-
         // ----- Toolbar -----
-        // One bar: tools on the left, view, history and saving on the right. When the
-        // window is narrow the two halves stack (see `apply_strip`).
+        // One bar over the page: the panel, the tools and the colour on the left,
+        // history and saving on the right. When the window is very narrow the two
+        // halves stack (see `apply_strip`).
         let strip = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         strip.add_css_class("tool-strip");
         let (left, right) = (widgets::hbox(2), widgets::hbox(2));
-        // Each half is one row of the sidebar's grid, also when they stack.
-        widgets::follow_row_height(&left);
-        widgets::follow_row_height(&right);
         left.set_hexpand(true);
         right.set_halign(gtk::Align::End);
         strip.append(&left);
         strip.append(&right);
 
-        let panel_toggle = icon_toggle("npdf-thumbs-symbolic", "Show or hide the side panel (F9)");
+        let panel_toggle = icon_toggle("sidebar-show-symbolic", "Side panel (F9)");
         panel_toggle.set_active(true);
         panel_toggle.add_css_class("tb-btn");
         left.append(&panel_toggle);
         left.append(&sep());
 
-        // Select | text markup | drawing and notes | edit and sign.
-        let mut tool_buttons = Vec::new();
+        // Select | highlight, draw, note, text | sign.
+        let mut tool_groups = Vec::new();
         let mut first: Option<gtk::ToggleButton> = None;
-        for (i, t) in Tool::ALL.into_iter().enumerate() {
-            if matches!(i, 1 | 4 | 7) {
+        for (i, tools) in Tool::GROUPS.into_iter().enumerate() {
+            if matches!(i, 1 | 5) {
                 left.append(&sep());
             }
-            let b = icon_toggle(t.icon(), &t.tooltip());
-            b.add_css_class("tb-btn");
-            if let Some(f) = &first {
-                b.set_group(Some(f));
-            } else {
-                first = Some(b.clone());
-            }
-            b.set_active(t == Tool::Select);
-            b.connect_toggled(move |b| {
-                if b.is_active() {
-                    set_tool(t);
-                }
-            });
-            left.append(&b);
-            tool_buttons.push((t, b));
+            let (g, wrap) = ToolGroup::new(tools, &mut first);
+            left.append(&wrap);
+            tool_groups.push(g);
+        }
+        if let Some(f) = &first {
+            f.set_active(true);
         }
 
         // The colour (and the tool's other settings) for new markup.
         let colour_btn = gtk::MenuButton::new();
-        colour_btn.set_tooltip_text(Some("Color and settings for this tool"));
+        colour_btn.set_tooltip_text(Some("Colour and size"));
         colour_btn.add_css_class("colour-button");
         colour_btn.set_valign(gtk::Align::Center);
-        colour_btn.set_margin_start(6);
+        colour_btn.set_margin_start(4);
+        let face = widgets::hbox(4);
         let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         dot.add_css_class("dot");
         dot.add_css_class("tool-dot");
@@ -379,7 +420,11 @@ impl View {
         let colour_css = gtk::CssProvider::new();
         #[allow(deprecated)]
         dot.style_context().add_provider(&colour_css, gtk::STYLE_PROVIDER_PRIORITY_USER);
-        colour_btn.set_child(Some(&dot));
+        face.append(&dot);
+        let chev = gtk::Image::from_icon_name("pan-down-symbolic");
+        chev.add_css_class("chevron");
+        face.append(&chev);
+        colour_btn.set_child(Some(&face));
         let pop = gtk::Popover::new();
         pop.add_css_class("tool-popover");
         let pop_box = widgets::vbox(10);
@@ -392,15 +437,13 @@ impl View {
         left.append(&colour_btn);
 
         // ----- In the window header -----
-        // The middle: back and forward after a link, and the page number.
-        let head_center = widgets::hbox(2);
+        // The middle: back and forward after a link, around the page number.
+        let head_center = widgets::hbox(4);
         head_center.set_valign(gtk::Align::Center);
-        let back_btn = widgets::bar_button("go-previous-symbolic", "Back to where you were (Alt+←)");
-        let forward_btn = widgets::bar_button("go-next-symbolic", "Forward again (Alt+→)");
+        let back_btn = widgets::bar_button("go-previous-symbolic", "Back (Alt+←)");
+        let forward_btn = widgets::bar_button("go-next-symbolic", "Forward (Alt+→)");
         back_btn.connect_clicked(|_| go_back());
         forward_btn.connect_clicked(|_| go_forward());
-        head_center.append(&back_btn);
-        head_center.append(&forward_btn);
 
         let nav = widgets::hbox(6);
         nav.add_css_class("page-nav");
@@ -410,49 +453,50 @@ impl View {
         page_entry.set_max_width_chars(5);
         EditableExt::set_alignment(&page_entry, 0.5);
         page_entry.set_tooltip_text(Some("Go to page"));
-        let total = widgets::label("/ 1", "page-total");
+        let total = widgets::label("of 1", "page-total");
         nav.append(&page_entry);
         nav.append(&total);
         nav.set_valign(gtk::Align::Center);
+        head_center.append(&back_btn);
         head_center.append(&nav);
+        head_center.append(&forward_btn);
 
-        // The end: zoom, fit, layout and the actions without a button of their own.
+        // The end: one menu for zoom and layout, find, and the actions without a
+        // button of their own.
         let head_end = widgets::hbox(2);
         head_end.set_valign(gtk::Align::Center);
-        let zout = widgets::bar_button("zoom-out-symbolic", "Zoom out (Ctrl+−)");
-        let zin = widgets::bar_button("zoom-in-symbolic", "Zoom in (Ctrl++)");
-        let zwidth = widgets::bar_button("npdf-fit-width-symbolic", "Fit width (Ctrl+0)");
-        let zpage = widgets::bar_button("npdf-fit-page-symbolic", "Fit page (Ctrl+9)");
-        zout.connect_clicked(|_| zoom_by(1.0 / 1.2));
-        zin.connect_clicked(|_| zoom_by(1.2));
-        zwidth.connect_clicked(|_| zoom_fit("fit-width"));
-        zpage.connect_clicked(|_| zoom_fit("fit-page"));
-        let zoom_label = widgets::label("100%", "zoom-readout");
-        zoom_label.set_width_chars(5);
-        zoom_label.set_xalign(0.5);
-        head_end.append(&zout);
-        head_end.append(&zoom_label);
-        head_end.append(&zin);
-        head_end.append(&zwidth);
-        head_end.append(&zpage);
-
-        let layout_btn = gtk::MenuButton::new();
-        layout_btn.set_icon_name("npdf-layout-symbolic");
-        layout_btn.set_tooltip_text(Some("Page layout"));
-        layout_btn.add_css_class("bar-button");
-        layout_btn.set_valign(gtk::Align::Center);
-        let layout_pop = gtk::Popover::new();
-        layout_pop.add_css_class("menu-popover");
+        let fit_btn = gtk::MenuButton::new();
+        fit_btn.add_css_class("fit-button");
+        fit_btn.set_valign(gtk::Align::Center);
+        fit_btn.set_tooltip_text(Some("Zoom and page layout"));
+        let face = widgets::hbox(6);
+        face.append(&gtk::Image::from_icon_name("zoom-in-symbolic"));
+        let fit_label = widgets::label("Fit width", "");
+        fit_label.set_width_chars(7);
+        fit_label.set_xalign(0.0);
+        face.append(&fit_label);
+        let chev = gtk::Image::from_icon_name("pan-down-symbolic");
+        chev.add_css_class("chevron");
+        face.append(&chev);
+        fit_btn.set_child(Some(&face));
+        let fit_pop = gtk::Popover::new();
+        fit_pop.add_css_class("menu-popover");
+        fit_pop.set_has_arrow(false);
         {
-            let lp = layout_pop.clone();
-            layout_pop.connect_show(move |_| lp.set_child(Some(&layout_menu(&lp))));
+            let fp = fit_pop.clone();
+            fit_pop.connect_show(move |_| fp.set_child(Some(&zoom_menu(&fp))));
         }
-        layout_btn.set_popover(Some(&layout_pop));
-        head_end.append(&layout_btn);
+        fit_btn.set_popover(Some(&fit_pop));
+        fit_btn.set_margin_end(4);
+        head_end.append(&fit_btn);
+
+        let find = widgets::bar_button("system-search-symbolic", "Find in this file (Ctrl+F)");
+        find.connect_clicked(|_| focus_search());
+        head_end.append(&find);
 
         let more_btn = gtk::MenuButton::new();
         more_btn.set_icon_name("view-more-symbolic");
-        more_btn.set_tooltip_text(Some("More (F10)"));
+        more_btn.set_tooltip_text(Some("More: save a copy, print, present, page colours, close (F10)"));
         more_btn.add_css_class("bar-button");
         more_btn.set_valign(gtk::Align::Center);
         let more_pop = gtk::Popover::new();
@@ -474,11 +518,14 @@ impl View {
         undo_btn.connect_clicked(|_| doc::undo());
         redo_btn.connect_clicked(|_| doc::redo());
 
-        // The view's one primary button, in the accent while there's something to save.
-        let save_btn = icon_btn("document-save-symbolic", "Save (Ctrl+S)");
+        // The view's one primary button, there only while there's something to save.
+        let save_btn = gtk::Button::with_label("Save");
+        save_btn.set_tooltip_text(Some("Save (Ctrl+S)"));
+        save_btn.add_css_class("suggested-action");
         save_btn.add_css_class("save-button");
         save_btn.set_valign(gtk::Align::Center);
         save_btn.set_margin_start(6);
+        save_btn.set_visible(false);
         save_btn.connect_clicked(|_| doc::save());
         right.append(&save_btn);
         // The strip never holds the window wide: it stacks when there's no room (see
@@ -572,7 +619,7 @@ impl View {
             colour: RefCell::new(p.highlight_color.clone()),
             colour_css,
             tool_colours: RefCell::new(HashMap::new()),
-            tool_buttons: RefCell::new(tool_buttons),
+            tool_groups,
             colour_btn,
             colour_row: RefCell::new(None),
             options,
@@ -585,13 +632,12 @@ impl View {
             syncing: Cell::new(false),
             page_entry,
             total,
-            zoom_label,
+            fit_label,
             undo_btn,
             redo_btn,
             back_btn,
             forward_btn,
             save_btn,
-            tabs,
             chrome,
             banner,
             disk_banner,
@@ -601,6 +647,7 @@ impl View {
             right,
             head_center,
             head_end,
+            fit_btn,
             more_btn,
             search,
             programmatic: Cell::new(false),
@@ -934,7 +981,11 @@ impl View {
             let (w, h) = d.page_size(p.index);
             p.set_size(w, h, z);
         }
-        self.zoom_label.set_text(&format!("{:.0}%", z * 100.0));
+        self.fit_label.set_text(&match self.fit.get() {
+            Fit::Width => "Fit width".to_string(),
+            Fit::Page => "Fit page".to_string(),
+            Fit::None => format!("{:.0}%", z * 100.0),
+        });
         if !self.is_presenting() {
             self.view_states.borrow_mut().insert(d.path(), (z, self.fit.get()));
         }
@@ -1327,98 +1378,29 @@ impl View {
         }
     }
 
-    /// Everything in the tabs and strip that follows the document.
+    /// Everything in the toolbar and the header that follows the document.
     fn refresh_chrome(self: &Rc<Self>) {
-        self.refresh_tabs();
         let d = doc::current();
         match &d {
             Some(d) => {
-                self.total.set_text(&format!("/ {}", d.n_pages()));
+                self.total.set_text(&format!("of {}", d.n_pages()));
                 self.banner.set_visible(!d.editable());
                 self.disk_banner.set_visible(d.changed_on_disk());
                 self.disk_label.set_text(&format!("{} was changed by another program. Reload it, or keep your unsaved changes?", d.file_name()));
                 self.undo_btn.set_sensitive(d.can_undo());
                 self.redo_btn.set_sensitive(d.can_redo());
-                if d.dirty() {
-                    self.save_btn.add_css_class("suggested-action");
-                } else {
-                    self.save_btn.remove_css_class("suggested-action");
-                }
-                self.save_btn.set_sensitive(d.dirty());
+                self.save_btn.set_visible(d.dirty());
             }
             None => {
                 self.undo_btn.set_sensitive(false);
                 self.redo_btn.set_sensitive(false);
-                self.save_btn.set_sensitive(false);
+                self.save_btn.set_visible(false);
                 self.banner.set_visible(false);
                 self.disk_banner.set_visible(false);
             }
         }
         self.refresh_readout();
         self.apply_panel();
-    }
-
-    /// One tab per open file: its name, a dot when it has unsaved changes, and a close button.
-    fn refresh_tabs(&self) {
-        while let Some(c) = self.tabs.first_child() {
-            self.tabs.remove(&c);
-        }
-        let current = doc::current();
-        for d in doc::all() {
-            let tab = widgets::hbox(0);
-            tab.add_css_class("doc-tab");
-            let active = current.as_ref().is_some_and(|c| Rc::ptr_eq(c, &d));
-            if active {
-                tab.add_css_class("active");
-            }
-            let main = gtk::Button::new();
-            main.add_css_class("tab-main");
-            let inner = widgets::hbox(6);
-            let icon = gtk::Image::from_icon_name("npdf-document-symbolic");
-            icon.add_css_class("tab-icon");
-            inner.append(&icon);
-            let name = widgets::label(&d.file_name(), "tab-name");
-            name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-            name.set_max_width_chars(28);
-            inner.append(&name);
-            if d.dirty() {
-                let dot = widgets::label("•", "tab-dirty");
-                dot.set_tooltip_text(Some("Unsaved changes"));
-                inner.append(&dot);
-            }
-            main.set_child(Some(&inner));
-            let title = d.title();
-            let path = paths::pretty(&d.path());
-            main.set_tooltip_text(Some(&if title != d.file_name() { format!("{title}\n{path}") } else { path }));
-            let weak = Rc::downgrade(&d);
-            main.connect_clicked(move |_| {
-                if let Some(d) = weak.upgrade() {
-                    doc::switch_to(&d);
-                }
-            });
-            // A middle click closes the tab.
-            let middle = gtk::GestureClick::new();
-            middle.set_button(gdk::BUTTON_MIDDLE);
-            let weak = Rc::downgrade(&d);
-            middle.connect_released(move |_, _, _, _| {
-                if let Some(d) = weak.upgrade() {
-                    close_doc(&d);
-                }
-            });
-            main.add_controller(middle);
-            tab.append(&main);
-            let close = icon_btn("window-close-symbolic", "Close this file (Ctrl+W)");
-            close.add_css_class("tab-close");
-            close.set_valign(gtk::Align::Center);
-            let weak = Rc::downgrade(&d);
-            close.connect_clicked(move |_| {
-                if let Some(d) = weak.upgrade() {
-                    close_doc(&d);
-                }
-            });
-            tab.append(&close);
-            self.tabs.append(&tab);
-        }
     }
 
     fn refresh_readout(&self) {
@@ -1428,11 +1410,8 @@ impl View {
                 self.page_entry.set_text(&text);
             }
             self.panel.highlight_page(d.page());
-            let (b, f) = (d.can_go_back(), d.can_go_forward());
-            self.back_btn.set_sensitive(b);
-            self.forward_btn.set_sensitive(f);
-            self.back_btn.set_visible(b || f);
-            self.forward_btn.set_visible(b || f);
+            self.back_btn.set_sensitive(d.can_go_back());
+            self.forward_btn.set_sensitive(d.can_go_forward());
         }
     }
 
@@ -1440,9 +1419,10 @@ impl View {
         if self.tool.replace(t) == t {
             return;
         }
-        for (tool, b) in self.tool_buttons.borrow().iter() {
-            if *tool == t && !b.is_active() {
-                b.set_active(true);
+        if let Some(g) = self.tool_groups.iter().find(|g| g.tools.contains(&t)) {
+            g.show(t);
+            if !g.toggle.is_active() {
+                g.toggle.set_active(true);
             }
         }
         *self.annot_sel.borrow_mut() = None;
@@ -1499,11 +1479,50 @@ impl View {
     }
 }
 
-/// The layout popover: one page at a time or continuous, single or side by side.
-fn layout_menu(pop: &gtk::Popover) -> gtk::Box {
+/// The zoom menu: zoom in and out, fit width or page, and the page layout (one
+/// page at a time or continuous, single or side by side).
+fn zoom_menu(pop: &gtk::Popover) -> gtk::Box {
     let bx = widgets::vbox(8);
     bx.add_css_class("menu-box");
     let p = prefs::get();
+    let zoom = widgets::hbox(4);
+    let title = widgets::label("Zoom", "popover-title");
+    title.set_hexpand(true);
+    title.set_xalign(0.0);
+    zoom.append(&title);
+    let readout = widgets::label("", "zoom-readout");
+    readout.set_width_chars(5);
+    let show = {
+        let r = readout.clone();
+        move || r.set_text(&view().map(|v| format!("{:.0}%", v.zoom.get() * 100.0)).unwrap_or_default())
+    };
+    show();
+    let zout = widgets::bar_button("zoom-out-symbolic", "Zoom out (Ctrl+−)");
+    let s = show.clone();
+    zout.connect_clicked(move |_| {
+        zoom_by(1.0 / 1.2);
+        s();
+    });
+    let zin = widgets::bar_button("zoom-in-symbolic", "Zoom in (Ctrl++)");
+    let s = show.clone();
+    zin.connect_clicked(move |_| {
+        zoom_by(1.2);
+        s();
+    });
+    zoom.append(&zout);
+    zoom.append(&readout);
+    zoom.append(&zin);
+    bx.append(&zoom);
+    let items = widgets::vbox(2);
+    items.append(&menu_item(pop, "Fit width", "Ctrl+0", || zoom_fit("fit-width")));
+    items.append(&menu_item(pop, "Fit page", "Ctrl+9", || zoom_fit("fit-page")));
+    items.append(&menu_item(pop, "Actual size", "", || {
+        if let Some(v) = view() {
+            v.set_fit_zoom(1.0, Fit::None);
+        }
+    }));
+    bx.append(&items);
+    bx.append(&menu_sep());
     bx.append(&widgets::label("Scrolling", "popover-title"));
     let scroll = widgets::segmented(
         &widgets::opts(&[("continuous", "Continuous"), ("single", "One at a time")]),
@@ -1560,6 +1579,17 @@ fn more_menu(pop: &gtk::Popover) -> gtk::Box {
         bx.append(&show);
     }
     bx.append(&menu_sep());
+    let colours = widgets::vbox(6);
+    colours.add_css_class("menu-section");
+    colours.append(&widgets::label("Page colours", "popover-title"));
+    let seg = widgets::segmented(&widgets::opts(&[("off", "Off"), ("invert", "Invert"), ("tint", "Theme tint")]), &prefs::get().page_colors, |v| {
+        prefs::update(|p| p.page_colors = v);
+        theme::apply();
+    });
+    seg.set_tooltip_text(Some("Recolour pages to the theme for reading at night"));
+    colours.append(&seg);
+    bx.append(&colours);
+    bx.append(&menu_sep());
     bx.append(&close);
     bx
 }
@@ -1604,8 +1634,8 @@ pub fn close_file() {
     });
 }
 
-/// Close a particular file, from its tab.
-fn close_doc(d: &Rc<Doc>) {
+/// Close a particular file, from its row in the sidebar.
+pub fn close_doc(d: &Rc<Doc>) {
     doc::switch_to(d);
     close_file();
 }
@@ -1625,6 +1655,21 @@ pub fn header_parts() -> Option<(gtk::Box, gtk::Box)> {
 pub fn open_more_menu() {
     if let Some(v) = view() {
         v.more_btn.popup();
+    }
+}
+
+/// Open one of the reader's menus: "zoom", "more", or a tool's kinds ("highlight", "text").
+pub fn open_menu(name: &str) {
+    let Some(v) = view() else { return };
+    match name {
+        "zoom" => v.fit_btn.popup(),
+        "more" => v.more_btn.popup(),
+        tool => {
+            let kinds = v.tool_groups.iter().find(|g| g.tools[0].name().to_lowercase().starts_with(tool)).and_then(|g| g.kinds.clone());
+            if let Some(k) = kinds {
+                k.popup();
+            }
+        }
     }
 }
 
@@ -1734,9 +1779,13 @@ pub fn set_tool(t: Tool) {
     }
 }
 
+/// A narrow window: the panel floats over the pages and the tools keep only their icons.
 pub fn set_narrow(narrow: bool) {
     if let Some(v) = view() {
         v.narrow.set(narrow);
+        for g in &v.tool_groups {
+            g.label.set_visible(!narrow);
+        }
         v.apply_panel();
     }
 }
